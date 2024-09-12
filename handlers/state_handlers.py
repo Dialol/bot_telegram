@@ -3,9 +3,10 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from database import save_client_data_to_db
 from config_reader import config
-import logging
+from logger_setup import logger
 from bot_instance import bot
 
+current_user_id = None
 router = Router()
 
 
@@ -15,15 +16,17 @@ class ClientInfoForm(StatesGroup):
     birthdate = State()
 
 
-current_user_id = None
+class ClientState(StatesGroup):
+    waiting_for_reply = State()
 
 
 @router.message()
 async def handle_user_messages(message: types.Message, state: FSMContext):
+    attempts = await state.get_data()
+    attempt_count = attempts.get("attempt_count", 0)
     if message.from_user.id in config.OPERATORS:
         global current_user_id
-        logging.info(
-            f"Received message from {message.from_user.id}: {message.text}")
+        logger.info(f"message from {message.from_user.id}: {message.text}")
 
         if current_user_id is not None:
             await collect_client_information(message, state)
@@ -33,12 +36,35 @@ async def handle_user_messages(message: types.Message, state: FSMContext):
                 current_user_id = user_id
                 await message.answer(f'ID пользователя {user_id} сохранен.',
                                      reply_markup=get_main_menu_keyboard())
-                logging.info(f"User ID {user_id} saved")
+                logger.info(f"User ID {user_id} saved")
             except ValueError:
                 await message.answer(
                     "Пожалуйста, введите корректный ID (число).")
     else:
-        await message.answer("У вас нет доступа к этой функции.")
+        if attempt_count < 1:
+            if message.text:
+                for operator_id in config.OPERATORS:
+                    await bot.send_message(
+                        operator_id, f"Ответ от клиента: {message.text}")
+            elif message.document:
+                if message.document.mime_type == "application/pdf":
+                    for operator_id in config.OPERATORS:
+                        await bot.send_document(
+                            operator_id, message.document.file_id)
+                else:
+                    await message.answer("Допустимы только PDF файлы.")
+            elif message.photo:
+                for operator_id in config.OPERATORS:
+                    await bot.send_photo(
+                        operator_id, message.photo[-1].file_id)
+            else:
+                await message.answer(
+                    "Разрешены только файлы формата JPEG и PDF.")
+            await state.update_data(attempt_count=attempt_count + 1)
+            await message.answer("Ваше сообщение отправлено оператору.")
+        else:
+            await message.answer(
+                "Вы уже отправили ответ, больше сообщений отправить нельзя.")
 
 
 async def ask_for_user_name(message: types.Message, state: FSMContext):
@@ -50,12 +76,15 @@ async def ask_for_user_name(message: types.Message, state: FSMContext):
         await message.answer("ID клиента не установлен.")
 
 
-async def request_passport(message: types.Message):
+async def request_passport(message: types.Message, state: FSMContext):
     global current_user_id
     if current_user_id is not None:
         try:
-            await bot.send_message(current_user_id,
-                                   "Сообщение для клиента")
+            await bot.send_message(
+                current_user_id,
+                "Добрый день. Отправьте фотографию паспорта (.jpg или .png)")
+            await state.set_state(ClientState.waiting_for_reply)
+            await state.update_data(attempt_count=0)
             await message.answer("Сообщение отправлено клиенту.")
         except Exception as e:
             await message.answer("Произошла ошибка при отправке сообщения.")
@@ -68,8 +97,9 @@ async def request_passport2(message: types.Message):
     global current_user_id
     if current_user_id is not None:
         try:
-            await bot.send_message(current_user_id,
-                                   "Сообщение для клиента")
+            await bot.send_message(
+                current_user_id,
+                "Добрый день. Отправьте фотографию паспорта (.jpg или .png)")
             await message.answer("Сообщение отправлено клиенту.")
         except Exception as e:
             await message.answer("Произошла ошибка при отправке сообщения.")
@@ -82,8 +112,9 @@ async def request_passport3(message: types.Message):
     global current_user_id
     if current_user_id is not None:
         try:
-            await bot.send_message(current_user_id,
-                                   "Сообщение для клиента")
+            await bot.send_message(
+                current_user_id,
+                "Добрый день. Отправьте фотографию паспорта (.jpg или .png)")
             await message.answer("Сообщение отправлено клиенту.")
         except Exception as e:
             await message.answer("Произошла ошибка при отправке сообщения.")
